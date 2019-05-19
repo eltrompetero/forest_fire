@@ -70,11 +70,14 @@ class FF1D():
             elif self.forest[i]==1:
                 newForest[i] = 0
                 nEmpty += 1
+                # if left adjacent tile is tree and hasn't been burned yet
                 if self.forest[(i-1)%self.n]==2 and newForest[(i-1)%self.n]==2:
-                    nTrees -= 1
+                    if i!=0:
+                        # since it's already been counted
+                        nTrees -= 1
                     nFires += 1
                     newForest[(i-1)%self.n] = 1
-                if self.forest[(i+1)%self.n]==2:
+                if self.forest[(i+1)%self.n]==2 and newForest[(i+1)%self.n]==2:
                     newForest[(i+1)%self.n] = 1
                     nFires += 1
             # if it hasn't already started burning from adjacent fire
@@ -87,7 +90,7 @@ class FF1D():
                     nTrees += 1
         
         # tree at i=0 will be double-counted with periodic boundary conditions
-        if self.forest[-1]==1 and self.forest[0]==2:
+        if self.forest[-1]==1 and self.forest[0]==2 and self.forest[1]!=1:
             nTrees -= 1
 
         self.forest = newForest
@@ -125,12 +128,15 @@ class FF1D():
         nTrees = np.zeros(n_iters//record_every+1, dtype=int)
         forestHistory = np.zeros((n_iters//record_every+1, self.n))
 
-        counter = 0
+        counter = 1
         forestHistory[0] = self.forest[:]
+        nEmpty[0] = (self.forest==0).sum()
+        nFires[0] = (self.forest==1).sum()
+        nTrees[0] = (self.forest==2).sum()
         for i in range(n_iters//record_every):
             for j in range(record_every):
-                nEmpty[counter+1], nFires[counter+1], nTrees[counter+1] = self.sweep_once()
-                forestHistory[counter+1] = self.forest[:]
+                nEmpty[counter], nFires[counter], nTrees[counter] = self.sweep_once()
+                forestHistory[counter] = self.forest[:]
             counter += 1
 
         return nEmpty, nFires, nTrees, forestHistory
