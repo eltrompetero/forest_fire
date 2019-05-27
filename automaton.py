@@ -141,3 +141,131 @@ class FF1D():
 
         return nEmpty, nFires, nTrees, forestHistory
 #end FF1D
+
+
+class FF2D():
+    """2D version of forest fire."""
+    def __init__(self, n, f, p, rng=None, initial_config=None):
+        """
+        Parameters
+        ----------
+        n : int or tuple
+            system size
+        f : float
+            lightning rate
+        p : float
+            regrowth rate
+        rng : np.random.RandomState
+            Random number generator.
+        initial_config : ndarray, None
+            Initial state of forest.
+        """
+
+        assert n>1
+        assert 0<f<=1
+        assert 0<p<=1
+        
+        if not hasattr(n, '__len__'):
+            self.n = (n,n)
+        else:
+            self.n = n
+        self.f = f
+        self.p = p
+        
+        if rng is None:
+            self.rng = np.random
+        else:
+            self.rng = rng
+
+        # 0 represents empty, 1 represents burning, 2 represents tree
+        if not initial_config is None:
+            assert initial_config.shape==self.n
+            assert initial_config.ndim==2
+            assert initial_config.dtype==np.uint8
+            self.forest = initial_config
+        else:
+            # initialize with trees
+            self.forest = np.zeros(self.n, dtype=np.uint8) + 2
+
+    def get_neighbors(self, i, j):
+        return (i, (j-1)%self.n[1]), (i, (j+1)%self.n[1]), ((i+1)%self.n[0], j), ((i-1)%self.n[0], j)
+
+    def sweep_once(self):
+        """Run a single sweep over the system.
+        
+        In order to avoid, multiple iterations through system, create a new copy of the
+        system.
+        """
+
+        newForest = self.forest.copy()
+
+        for i in range(self.n[0]):
+            for j in range(self.n[1]):
+                # if empty (0), can grow (2)
+                if self.forest[i,j]==0 and self.rng.rand()<self.p:
+                        newForest[i,j] = 2
+                # if on fire, it can spread and extinguishes (0)
+                elif self.forest[i,j]==1:
+                    newForest[i,j] = 0
+                    
+                    # if neighbors are tree and haven't been burned yet
+                    for ni,nj in self.get_neighbors(i,j):
+                        if self.forest[ni,nj]==2:
+                            newForest[ni,nj] = 1
+                # if it hasn't already started burning from adjacent fire
+                elif not newForest[i,j]==1:
+                    # if a tree (2), it can spontaneously combust (1)
+                    if self.rng.rand()<self.f:
+                        newForest[i,j] = 1
+        
+        self.forest = newForest
+
+    def sweep(self, n_iters, record_every=0):
+        """Sweep through entire lattice n_iters times. Options to record various
+        quantities.
+
+        Parameters
+        ----------
+        n_iters : int,
+        record_every : int, 0
+            Record every n steps. If 0, no records are taken.
+
+        Returns
+        -------
+        ndarray
+            nEmpty as measured during simulation.
+        ndarray
+            nFires
+        ndarray
+            nTrees
+        ndarray
+            (n_records, n) history of the forest state.
+        """
+
+        if record_every==0:
+            for i in range(n_iters):
+                self.sweep_once();
+            return
+
+        nEmpty = np.zeros(n_iters//record_every+1, dtype=int)
+        nFires = np.zeros(n_iters//record_every+1, dtype=int)
+        nTrees = np.zeros(n_iters//record_every+1, dtype=int)
+        forestHistory = np.zeros((n_iters//record_every+1, self.n[0], self.n[1]))
+
+        counter = 1
+        forestHistory[0] = self.forest[:]
+        nEmpty[0] = (self.forest==0).sum()
+        nFires[0] = (self.forest==1).sum()
+        nTrees[0] = (self.forest==2).sum()
+        for i in range(n_iters//record_every):
+            for j in range(record_every):
+                self.sweep_once()
+                stateCount = np.bincount(self.forest.ravel(), minlength=3)
+                nEmpty[counter] = stateCount[0]
+                nFires[counter] = stateCount[1]
+                nTrees[counter] = stateCount[2]
+                forestHistory[counter] = self.forest
+            counter += 1
+
+        return nEmpty, nFires, nTrees, forestHistory
+#end FF2D
