@@ -3,7 +3,7 @@
 # Author: Eddie Lee, edl56@cornell.edu
 # ===================================================================================== #
 import numpy as np
-from numba import jit
+from numba import jit, njit
 
 
 class FF1D():
@@ -334,3 +334,216 @@ class FF2D():
                 cluster.append((thisi,thisj))
         return cluster
 #end FF2D
+
+
+class FastFF2D(FF2D):
+    """2D version of forest fire with rapidly propagating fires and continuous time
+    approximation between fires."""
+    def __init__(self, n, f, p, rng=None, initial_config=None):
+        """
+        Parameters
+        ----------
+        n : int or tuple
+            system size
+        f : float
+            lightning rate
+        p : float
+            regrowth rate
+        rng : np.random.RandomState
+            Random number generator.
+        initial_config : ndarray, None
+            Initial state of forest.
+        """
+
+        assert n>1
+        assert 0<f<=1
+        assert 0<p<=1
+        
+        if not hasattr(n, '__len__'):
+            self.n = (n,n)
+        else:
+            self.n = n
+        assert (1/p)>=(100*self.n[0]) and (1/p)>=(100*self.n[1])
+        self.f = f
+        self.p = p
+        
+        if rng is None:
+            self.rng = np.random
+        else:
+            self.rng = rng
+
+        # 0 represents empty, 1 represents burning, 2 represents tree
+        if not initial_config is None:
+            assert initial_config.shape==self.n
+            assert initial_config.ndim==2
+            assert initial_config.dtype==np.uint8
+            self.forest = initial_config
+        else:
+            # initialize with trees
+            self.forest = np.zeros(self.n, dtype=np.uint8) + 2
+
+    def sweep(self, n_iters):
+        """Record n_iters fires. Ends with a successful lightning strike.
+
+        Parameters
+        ----------
+        n_iters : int
+
+        Returns
+        -------
+        list of lists of tuples
+            fires coordinates
+        ndarray
+            (n_records, n) history of the forest state.
+        """
+
+        fires = []
+        forestHistory = np.zeros((n_iters+1, self.n[0], self.n[1]))
+
+        forestHistory[0] = self.forest[:]
+        tf = 1/self.f/np.prod(self.n)
+        counter = 1
+        while len(fires)<n_iters:
+            # fast forward time til next lightning strike
+            t = self.rng.exponential(scale=tf)
+            # fast forward concomitant tree growth
+            ix = self.forest==0
+            self.forest[ix] = (self.rng.exponential(scale=1/self.p, size=ix.sum())<t)*2.
+
+            # lightning strikes a random site
+            siteix = self.rng.randint(self.n[0]), self.rng.randint(self.n[1])
+            
+            if self.forest[siteix[0],siteix[1]]==2:
+                burntCluster = self.grow_cluster(siteix[0], siteix[1])
+                ix = list(zip(*burntCluster))
+                self.forest[ix[0],ix[1]] = 0
+                fires.append(burntCluster)
+                forestHistory[counter] = self.forest[:,:]
+                counter += 1
+
+        return fires, forestHistory
+
+    def clusters(self, forest=None, value=2):
+        """Identify all connected clusters in the forest.
+        
+        Parameters
+        ----------
+        forest : ndarray, None
+        value : int, 2
+
+        Returns
+        -------
+        list of lists tuples
+            Each internal list holds sets of coordinates that belong to single clusters.
+        """
+        
+        if forest is None:
+            forest = self.forest
+
+        clusteredxy = set()
+        clusters = []
+        for i in range(self.n[0]):
+            for j in range(self.n[1]):
+                if forest[i,j]==value and not (i,j) in clusteredxy:
+                    clusters.append([(i,j)])
+                    clusteredxy.add((i,j))
+                    toSearch = list(self.get_neighbors(i,j))
+                    while toSearch:
+                        thisi, thisj = toSearch.pop(0)
+                        if forest[thisi, thisj]==value and not (thisi,thisj) in clusteredxy:
+                            toSearch += list(self.get_neighbors(thisi, thisj))
+                            clusteredxy.add((thisi,thisj))
+                            clusters[-1].append((thisi,thisj))
+        return clusters
+
+    def grow_cluster(self, i, j, forest=None, value=2):
+        """Identify connected cluster starting with (i,j).
+
+        Parameters
+        ----------
+        i : int
+        j : int
+        forest : ndarray, None
+        value : int, 2
+
+        Returns
+        -------
+        list of tuples
+            Each internal list holds sets of coordinates that belong to single clusters.
+        """
+
+        if forest is None:
+            forest = self.forest
+
+        return jit_grow_2dcluster(i, j, forest, value)
+
+    def _grow_cluster(self, i, j, forest=None, value=2):
+        """Identify connected cluster starting with (i,j).
+
+        SLOW, DEPRECATED VERSION.
+        
+        Parameters
+        ----------
+        i : int
+        j : int
+        forest : ndarray, None
+        value : int, 2
+
+        Returns
+        -------
+        list of tuples
+            Each internal list holds sets of coordinates that belong to single clusters.
+        """
+        
+        if forest is None:
+            forest = self.forest
+        assert forest[i,j]==value
+
+        clusteredxy = set()
+        cluster = [(i,j)]
+        clusteredxy.add((i,j))
+        toSearch = list(self.get_neighbors(i,j))
+        while toSearch:
+            thisi, thisj = toSearch.pop(0)
+            if forest[thisi, thisj]==value and not (thisi,thisj) in clusteredxy:
+                toSearch += list(self.get_neighbors(thisi, thisj))
+                clusteredxy.add((thisi,thisj))
+                cluster.append((thisi,thisj))
+        return cluster
+#end FastFF2D
+
+
+@njit
+def jit_grow_2dcluster(i, j, forest, value):
+    """Identify connected cluster starting with (i,j).
+    
+    Parameters
+    ----------
+    i : int
+    j : int
+    forest : ndarray
+    value : int
+
+    Returns
+    -------
+    list of tuples
+        Each internal list holds sets of coordinates that belong to single clusters.
+    """
+    
+    assert forest[i,j]==value
+
+    clusteredxy = set()
+    cluster = [(i,j)]
+    clusteredxy.add((i,j))
+    toSearch = jit_get_2dneighbors(forest.shape[0], forest.shape[1], i, j)
+    while toSearch:
+        thisi, thisj = toSearch.pop(0)
+        if forest[thisi, thisj]==value and not (thisi,thisj) in clusteredxy:
+            toSearch += jit_get_2dneighbors(forest.shape[0], forest.shape[1], thisi, thisj)
+            clusteredxy.add((thisi,thisj))
+            cluster.append((thisi,thisj))
+    return cluster
+
+@njit
+def jit_get_2dneighbors(h, w, i, j):
+        return [(i, (j-1)%w), (i, (j+1)%w), ((i+1)%h, j), ((i-1)%h, j)]
