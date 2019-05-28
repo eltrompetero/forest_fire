@@ -270,7 +270,7 @@ class FF2D():
         return nEmpty, nFires, nTrees, forestHistory
 
     def clusters(self, forest=None, value=2):
-        """Identify connected clusters in the forest.
+        """Identify all connected clusters in the forest.
         
         Parameters
         ----------
@@ -301,4 +301,36 @@ class FF2D():
                             clusteredxy.add((thisi,thisj))
                             clusters[-1].append((thisi,thisj))
         return clusters
+
+    def grow_cluster(self, i, j, forest=None, value=2):
+        """Identify connected cluster starting with (i,j).
+        
+        Parameters
+        ----------
+        i : int
+        j : int
+        forest : ndarray, None
+        value : int, 2
+
+        Returns
+        -------
+        list of tuples
+            Each internal list holds sets of coordinates that belong to single clusters.
+        """
+        
+        if forest is None:
+            forest = self.forest
+        assert forest[i,j]==value
+
+        clusteredxy = set()
+        cluster = [(i,j)]
+        clusteredxy.add((i,j))
+        toSearch = list(self.get_neighbors(i,j))
+        while toSearch:
+            thisi, thisj = toSearch.pop(0)
+            if forest[thisi, thisj]==value and not (thisi,thisj) in clusteredxy:
+                toSearch += list(self.get_neighbors(thisi, thisj))
+                clusteredxy.add((thisi,thisj))
+                cluster.append((thisi,thisj))
+        return cluster
 #end FF2D
