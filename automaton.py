@@ -440,23 +440,17 @@ class FastFF2D(FF2D):
         if forest is None:
             forest = self.forest
 
-        clusteredxy = set()
         clusters = []
+        clusteredxy = set()
         for i in range(self.n[0]):
             for j in range(self.n[1]):
                 if forest[i,j]==value and not (i,j) in clusteredxy:
-                    clusters.append([(i,j)])
-                    clusteredxy.add((i,j))
-                    toSearch = list(self.get_neighbors(i,j))
-                    while toSearch:
-                        thisi, thisj = toSearch.pop(0)
-                        if forest[thisi, thisj]==value and not (thisi,thisj) in clusteredxy:
-                            toSearch += list(self.get_neighbors(thisi, thisj))
-                            clusteredxy.add((thisi,thisj))
-                            clusters[-1].append((thisi,thisj))
+                    c, cxy = self.grow_cluster(i, j, forest, value, return_clustered=True)
+                    clusters.append(c)
+                    clusteredxy.union(cxy)
         return clusters
 
-    def grow_cluster(self, i, j, forest=None, value=2):
+    def grow_cluster(self, i, j, forest=None, value=2, return_clustered=False):
         """Identify connected cluster starting with (i,j).
 
         Parameters
@@ -465,17 +459,21 @@ class FastFF2D(FF2D):
         j : int
         forest : ndarray, None
         value : int, 2
+        return_clustered : bool, False
 
         Returns
         -------
         list of tuples
             Each internal list holds sets of coordinates that belong to single clusters.
+        set, optional
         """
 
         if forest is None:
             forest = self.forest
-
-        return jit_grow_2dcluster(i, j, forest, value)
+        
+        if return_clustered:
+            return jit_grow_2dcluster(i, j, forest, value)
+        return jit_grow_2dcluster(i, j, forest, value)[0]
 
     def _grow_cluster(self, i, j, forest=None, value=2):
         """Identify connected cluster starting with (i,j).
@@ -532,7 +530,7 @@ def jit_grow_2dcluster(i, j, forest, value):
     
     assert forest[i,j]==value
 
-    clusteredxy = set()
+    clusteredxy = set()  # use set to speed up search
     cluster = [(i,j)]
     clusteredxy.add((i,j))
     toSearch = jit_get_2dneighbors(forest.shape[0], forest.shape[1], i, j)
@@ -542,7 +540,7 @@ def jit_grow_2dcluster(i, j, forest, value):
             toSearch += jit_get_2dneighbors(forest.shape[0], forest.shape[1], thisi, thisj)
             clusteredxy.add((thisi,thisj))
             cluster.append((thisi,thisj))
-    return cluster
+    return cluster, clusteredxy
 
 @njit
 def jit_get_2dneighbors(h, w, i, j):
